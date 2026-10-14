@@ -57,7 +57,7 @@ class Queue:
                        (attempts+1, time.time()+min(60, 2**min(attempts, 6)), route, uid))
 
 
-def acknowledged(result):
+def acknowledged(result, depth=0):
     """Accept the exact application ack, including HtmlService's JSON envelope."""
     if result.strip() == 'OK':
         return True
@@ -75,6 +75,16 @@ def acknowledged(result):
                 return True
         except ValueError:
             pass
+    # Google's bootstrap may embed the complete envelope as a JSON-encoded
+    # JavaScript string argument. Decode data only, never execute the script.
+    if depth < 2 and 'userHtml' in result:
+        for match in re.finditer(r'"(?:\\.|[^"\\])*"', result):
+            try:
+                decoded = json.loads(match.group(0))
+            except ValueError:
+                continue
+            if 'userHtml' in decoded and decoded != result and acknowledged(decoded, depth+1):
+                return True
     return bool(re.search(r'<body\b[^>]*>\s*OK\s*</body>', result, re.I))
 
 
@@ -85,7 +95,12 @@ def forward(base, key, route, body):
         result = response.read(1024*1024).decode('utf-8', errors='replace')
     # HTTP 200 can also contain Google's error/login page: never acknowledge that.
     if not acknowledged(result):
-        raise RuntimeError('Upstream did not acknowledge update')
+        flags = ','.join(label for label, marker in [
+            ('sandbox', 'userHtml'), ('login', 'accounts.google.com'),
+            ('quota', 'too many times'), ('script_error', 'ScriptError'),
+            ('unavailable', 'unable to open'), ('access', 'permission')]
+            if marker in result) or 'other'
+        raise RuntimeError('ack_missing shape=%s bytes=%d' % (flags, len(result)))
 
 
 def worker(queue, base, key, stop):
@@ -105,7 +120,7 @@ def worker(queue, base, key, stop):
             # Payloads, keys and upstream URLs must never be written to logs.
             reason = ('http_%d' % error.code if isinstance(error, HTTPError)
                       else 'network' if isinstance(error, (URLError, TimeoutError))
-                      else 'ack_missing' if isinstance(error, RuntimeError)
+                      else str(error) if isinstance(error, RuntimeError)
                       else 'internal')
             print('Delivery retry route=%s reason=%s upstream_ms=%d pending=%d' %
                   (route, reason, (time.monotonic()-started)*1000, queue.pending_count()), flush=True)
