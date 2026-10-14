@@ -14,6 +14,7 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(acknowledged('{"ok":true}'))
         self.assertTrue(acknowledged('<html><body>OK</body></html>'))
         self.assertTrue(acknowledged('<script>_initialize({"userHtml":"OK","sandboxMode":"IFRAME"})</script>'))
+        self.assertTrue(acknowledged('<script>_initialize('+json.dumps(json.dumps({'userHtml':'OK'}))+')</script>'))
         for bad in ['{"ok":false}', '<html>Login</html>',
                     '<html>Error: OK to retry</html>',
                     '<script>_initialize({"userHtml":"Error"})</script>']:
