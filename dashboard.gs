@@ -688,7 +688,7 @@ function doPost(e) {
     }
     const actor=(d.message||d.callback_query||{}).from;flushOutbox(true,actor?p.route+':'+actor.id:undefined);
   }finally{lock.releaseLock();}
-  return HtmlService.createHtmlOutput('OK');
+  return jsonReply({ok:true});
 }
 function setupHosting(){ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);table('_BotUsers',['ID','Ism','Username','Holat','Bo‘lim']);draftTable();table('_BotUpdates',['Kalit','Sana']);table('_BotOutbox',['ID','Bot','Usul','JSON','Holat']);if(!ScriptApp.getProjectTriggers().some(t=>t.getHandlerFunction()==='flushOutbox'))ScriptApp.newTrigger('flushOutbox').timeBased().everyMinutes(1).create();}
 function enableWebhooks(){['main','admin'].forEach(route=>{const url=EXEC_URL+'?route='+route+'&key='+encodeURIComponent(config().getProperty('WEBHOOK_KEY'));const r=telegram(route,'setWebhook',{url:url,allowed_updates:['message','callback_query'],max_connections:1,drop_pending_updates:false});if(!r.data.ok)throw new Error('Webhook setup failed: '+route);});}
