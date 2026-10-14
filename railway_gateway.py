@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hmac
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -10,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 
 class Queue:
@@ -19,6 +21,11 @@ class Queue:
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE IF NOT EXISTS updates (route TEXT, uid INTEGER, body TEXT, attempts INTEGER DEFAULT 0, due REAL DEFAULT 0, done INTEGER DEFAULT 0, PRIMARY KEY(route,uid))')
+            db.execute('CREATE INDEX IF NOT EXISTS pending_updates ON updates(done,due,uid)')
+
+    def pending_count(self):
+        with self.connect() as db:
+            return db.execute('SELECT COUNT(*) FROM updates WHERE done=0').fetchone()[0]
 
     @contextmanager
     def connect(self):
@@ -50,13 +57,34 @@ class Queue:
                        (attempts+1, time.time()+min(60, 2**min(attempts, 6)), route, uid))
 
 
+def acknowledged(result):
+    """Accept the exact application ack, including HtmlService's JSON envelope."""
+    if result.strip() == 'OK':
+        return True
+    try:
+        value = json.loads(result)
+        if isinstance(value, dict) and value.get('ok') is True:
+            return True
+    except ValueError:
+        pass
+    # HtmlService wraps user HTML in its sandbox bootstrap rather than returning
+    # it directly. An error page with an unrelated OK must not complete a job.
+    for match in re.finditer(r'"userHtml"\s*:\s*("(?:\\.|[^"\\])*")', result):
+        try:
+            if json.loads(match.group(1)).strip() == 'OK':
+                return True
+        except ValueError:
+            pass
+    return bool(re.search(r'<body\b[^>]*>\s*OK\s*</body>', result, re.I))
+
+
 def forward(base, key, route, body):
     url = base + '?' + urlencode({'key': key, 'route': route})
     req = Request(url, data=body.encode(), headers={'Content-Type': 'application/json'})
     with urlopen(req, timeout=180) as response:
         result = response.read(1024*1024).decode('utf-8', errors='replace')
     # HTTP 200 can also contain Google's error/login page: never acknowledge that.
-    if not (result.strip() == 'OK' or '>OK</' in result):
+    if not acknowledged(result):
         raise RuntimeError('Upstream did not acknowledge update')
 
 
@@ -67,12 +95,20 @@ def worker(queue, base, key, stop):
             stop.wait(.3)
             continue
         route, uid, body, attempts = job
+        started = time.monotonic()
         try:
             forward(base, key, route, body)
             queue.finish(route, uid)
-        except Exception:
+            print('Delivery completed route=%s upstream_ms=%d pending=%d' %
+                  (route, (time.monotonic()-started)*1000, queue.pending_count()), flush=True)
+        except Exception as error:
             # Payloads, keys and upstream URLs must never be written to logs.
-            print('Upstream delivery delayed; durable retry scheduled', flush=True)
+            reason = ('http_%d' % error.code if isinstance(error, HTTPError)
+                      else 'network' if isinstance(error, (URLError, TimeoutError))
+                      else 'ack_missing' if isinstance(error, RuntimeError)
+                      else 'internal')
+            print('Delivery retry route=%s reason=%s upstream_ms=%d pending=%d' %
+                  (route, reason, (time.monotonic()-started)*1000, queue.pending_count()), flush=True)
             queue.retry(route, uid, attempts)
 
 
@@ -129,6 +165,7 @@ def main():
     if len(secret) < 32 or not key:
         raise ValueError('Webhook secrets are required')
     queue = Queue(os.environ.get('QUEUE_PATH', '/data/telegram.sqlite3'))
+    print('Worker started pending=%d' % queue.pending_count(), flush=True)
     stop = threading.Event()
     thread = threading.Thread(target=worker, args=(queue, base, key, stop), daemon=True)
     thread.start()
