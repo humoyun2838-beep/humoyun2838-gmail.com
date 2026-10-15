@@ -977,10 +977,11 @@ function requestDashboardAI(input,progressive){
 function requestDashboardAIProgressive(input){
  const cache=CacheService.getScriptCache(),prefix='dmed-batch-v1:'+reportKey(JSON.stringify(input))+':',results=[];let requested=false;
  for(let start=0;start<input.reports.length;start+=25){
-  const key=prefix+start,stored=cache.get(key);let result=stored?JSON.parse(stored):null;
+  const part=input.reports.slice(start,start+25),key='dmed-part-v2:'+reportKey(JSON.stringify({period:input.period,departments:input.departments,reports:part,model:config().getProperty('GEMINI_MODEL')||'gemini-2.5-flash'})),legacy=cache.get(prefix+start),stored=cache.get(key)||legacy;let result=stored?JSON.parse(stored):null;
+  if(legacy&&result)cache.put(key,JSON.stringify(result),21600);
   if(!result){
    if(requested){config().setProperty('DASHBOARD_REFRESH_PENDING','yes');return null;}
-   result=requestDashboardAIBatch(Object.assign({},input,{reports:input.reports.slice(start,start+25)}));
+   result=requestDashboardAIBatch(Object.assign({},input,{reports:part}));
    if(!result)return null;const raw=JSON.stringify(result);if(Utilities.newBlob(raw).getBytes().length>95000)throw new Error('Tahlil qismi juda katta');
    cache.put(key,raw,21600);requested=true;
   }
@@ -1327,3 +1328,9 @@ const ROLE_MATRIX_HEADING='BO‘LIMLAR KESIMIDA • SHIFOKORLAR VA HAMSHIRALAR';
 function restoreDashboardRowOrder(s){const p=config(),title=String(s.getRange('A16').getValue()||'');if(title!==ROLE_MATRIX_HEADING){p.deleteProperty('ROLE_MATRIX_MOVED_ROWS');return;}let count=Number(p.getProperty('ROLE_MATRIX_MOVED_ROWS')||0);if(!Number.isSafeInteger(count)||count<1){const cells=s.getRange(16,1,s.getLastRow()-15,1).getValues(),at=cells.findIndex(r=>String(r[0])==='Yangi tasdiqlangan hisobotlar va sana filtri o‘zgarganda jadval avtomatik yangilanadi.');if(at<0)throw new Error('Dashboard jadvali oxiri topilmadi');count=at+1;}s.moveRows(s.getRange(16,1,count,s.getMaxColumns()),237+count);p.deleteProperty('ROLE_MATRIX_MOVED_ROWS');}
 function detachDashboardChartSources(s){const charts=s.getCharts().filter(c=>c.getRanges().some(r=>r.getSheet().getSheetId()===s.getSheetId()));if(!charts.length)return;const target=table('_DashboardCharts',['Dashboard diagramma manbalari']);charts.forEach(chart=>{const builder=chart.modify().clearRanges();chart.getRanges().forEach(source=>{if(source.getSheet().getSheetId()!==s.getSheetId()){builder.addRange(source);return;}ensureRows(target,source.getLastRow());const range=target.getRange(source.getA1Notation());range.setValues(source.getValues());builder.addRange(range);});s.updateChart(builder.build());});}
 function applyDashboardPresentation(s){s.getRange('A14:N14').breakApart().clear().setBackground('#ffffff');s.setRowHeight(14,12);restoreDashboardRowOrder(s);detachDashboardChartSources(s);s.getRange('A140:N157').breakApart().clear();s.getRange('A170:N213').breakApart().clear();s.hideRows(140,18);s.hideRows(170,44);const count=dashboardExportLastRow()-236;config().setProperty('ROLE_MATRIX_MOVED_ROWS',String(count));s.moveRows(s.getRange(237,1,count,s.getMaxColumns()),16);}
+function auditDashboardProgress(){
+ const input=dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod()),cache=CacheService.getScriptCache(),p=config(),prefix='dmed-batch-v1:'+reportKey(JSON.stringify(input))+':';let completed=0;
+ for(let start=0;start<input.reports.length;start+=25){const reports=input.reports.slice(start,start+25),key='dmed-part-v2:'+reportKey(JSON.stringify({period:input.period,departments:input.departments,reports:reports,model:p.getProperty('GEMINI_MODEL')||'gemini-2.5-flash'}));if(cache.get(key)||cache.get(prefix+start))completed+=reports.length;}
+ const s=book().getSheetByName(DASHBOARD_NAME);console.log(JSON.stringify({period:input.period,total:input.reports.length,completed:completed,error:p.getProperty('DMED_AI_ERROR'),running_seconds:p.getProperty('DASHBOARD_RUNNING_AT')?Math.round((Date.now()-Number(p.getProperty('DASHBOARD_RUNNING_AT')))/1000):null,pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
+ console.log(JSON.stringify({cards:['A7','E7','J7'].map(c=>s.getRange(c).getDisplayValue()),role_period:s.getRange('A17').getDisplayValue(),charts:s.getCharts().length}));
+}
