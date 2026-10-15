@@ -16,7 +16,7 @@ function repairAndAuditDashboard20261012(){
  console.log(JSON.stringify({period:dashboardSelectedPeriod(),redList:s.getRange('J10').getDisplayValue(),pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
 }
 const BOOK_ID = '1jLsOGjXr7YQH_9uB4LjELfkEMIB08D_aY20943yYZFc';
-const EXEC_URL = 'https://script.google.com/macros/s/AKfycbxIEkIwjPWICN2PF8cx114FNrrAtzv-yOOVJYBrxFA4vVUBmLLnCeCPuSfl8_NaiFjKug/exec';
+const EXEC_URL = 'https://script.google.com/macros/s/AKfycbxGbwbBiod-m5GxLR-r_tDPI6skpw9hXI-Tjchi3Wiy-S8Q1KH9CqJSZ7fc0GNClcr-6g/exec';
 const BOT_TITLE = 'Onko gematologiya';
 const EDIT = '✏️ Xabarni tahrirlash', PREV_PAGE = '◀️ Oldingi 10 ta', NEXT_PAGE = 'Keyingi 10 ta ▶️', REVIEW_BACK = '↩️ Xodimlar ro‘yxati';
 const PREVIEW = '👁️ Xabarni ko‘rish', UNDO = '↩️ Oxirgi yozuvni bekor qilish';
@@ -1392,4 +1392,17 @@ function migrateBookStep(){
   installDashboardDownloadLink();p.deleteProperty('BOOK_MIGRATION_IN_PROGRESS');queueDashboardAnalysis();
   console.log(JSON.stringify({ok:true,complete:true,active:currentBookId(),sheets:completed,dashboard_gid:dashboardSheetId()}));
  }finally{lock.releaseLock();}
+}
+
+function setupGmailHosting(){
+ setupHosting();installDailyAnalysis();
+ if(!ScriptApp.getProjectTriggers().some(t=>t.getHandlerFunction()==='dashboardDateEdited'))ScriptApp.newTrigger('dashboardDateEdited').forSpreadsheet(book()).onEdit().create();
+ Object.entries(config().getProperties()).filter(([k])=>k.startsWith('BROADCAST_JOB:')).forEach(([,v])=>{const j=JSON.parse(v);ScriptApp.newTrigger('processBroadcasts').timeBased().after(Math.max(1000,j.at-Date.now())).create();});
+ console.log(JSON.stringify({ok:true,book:book().getId(),handlers:ScriptApp.getProjectTriggers().map(t=>t.getHandlerFunction())}));
+}
+
+function auditGmailEndpoint(){
+ const checks=['main','admin'].map((route,i)=>{const at=Date.now(),r=UrlFetchApp.fetch(EXEC_URL+'?route='+route+'&key='+encodeURIComponent(config().getProperty('WEBHOOK_KEY')),{method:'post',contentType:'application/json',payload:JSON.stringify({update_id:Date.now()+i}),muteHttpExceptions:true});let d;try{d=JSON.parse(r.getContentText());}catch(e){d={ok:false};}return {route:route,http:r.getResponseCode(),ok:d.ok===true,ms:Date.now()-at};});
+ if(checks.some(x=>!x.ok))throw new Error('Gmail endpoint check failed: '+JSON.stringify(checks));
+ console.log(JSON.stringify({ok:true,book:book().getId(),checks:checks}));
 }
