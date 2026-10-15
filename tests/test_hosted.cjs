@@ -437,6 +437,8 @@ const allBatchResult=C.requestDashboardAI(fullPeriod);assert.equal(batchCalls,2)
 console.log('Date-range analysis covers all 210 reports across two batches without omission.');
 let resumed=null;const resumeStart=batchCalls;for(let attempt=0;attempt<9;attempt++){const beforeCalls=batchCalls;resumed=C.requestDashboardAI(fullPeriod,true);assert.equal(batchCalls-beforeCalls,1);if(attempt<8)assert.equal(resumed,null);}assert.ok(resumed);assert.equal(batchCalls-resumeStart,9);const cachedCalls=batchCalls;assert.ok(C.requestDashboardAI(fullPeriod,true));assert.equal(batchCalls,cachedCalls);
 console.log('Resumable analysis: 210 reports, 25 per execution, exactly one API batch per run, cached parts reused and complete result returned.');
+const appendedPeriod=JSON.parse(JSON.stringify(fullPeriod));appendedPeriod.reports.push({...appendedPeriod.reports[0],ref:'2026-10-12!C999'});const appendCalls=batchCalls;assert.ok(C.requestDashboardAI(appendedPeriod,true));assert.equal(batchCalls-appendCalls,1);
+console.log('New report arrives: completed earlier batches reused; only changed final batch reanalysed.');
 
 
 const savedClient={book:C.book,period:C.dashboardSelectedPeriod,edit:C.dashboardDateEdited,flush:context.SpreadsheetApp.flush};
