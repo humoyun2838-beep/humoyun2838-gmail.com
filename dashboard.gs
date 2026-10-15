@@ -1177,11 +1177,12 @@ function auditDashboardData(){console.log(JSON.stringify({records:dashboardSourc
 function dashboardCategory(status){return status===DMED_STATES[0]?0:status===DMED_STATES[1]?1:status===DMED_STATES[2]||status===DMED_STATES[3]?2:3;}
 function dashboardDateEdited(e){
  if(!e||!e.range||e.range.getSheet().getName()!==DASHBOARD_NAME||e.range.getRow()>4||e.range.getLastRow()<4||e.range.getColumn()>8||e.range.getLastColumn()<3)return;
- const s=book().getSheetByName(DASHBOARD_NAME);restoreDashboardRowOrder(s);let period;
+ const s=book().getSheetByName(DASHBOARD_NAME);let period;
  try{period=dashboardSelectedPeriod();}catch(error){['DMED_LAYOUT','DMED_INSIGHTS_LAYOUT','DMED_INSIGHTS_CHARTS'].forEach(k=>config().deleteProperty(k));s.getRange('A5:N170').clear();s.getCharts().forEach(c=>s.removeChart(c));s.getRange('A5').setValue(safeCellText(error.message));return;}
- const records=dashboardAnalysisSource(),input=dmedInput(records,period),empty=dmedEmpty(input);
- renderDashboard(prepareDashboard(),input,empty,'Tanlangan davr tahlili kutilmoqda.',false,records);
- renderDashboardInsights(s,input,empty,false,records);queueDashboardAnalysis();
+ const records=dashboardAnalysisSource(),input=dmedInput(records,period);
+ // Only the guarded refresh rebuilds/moves rows. Date edits must not race that renderer.
+ if(!config().getProperty('DASHBOARD_RUNNING_AT'))renderAnalysisProgress(s,input);
+ queueDashboardAnalysis();
 }
 function reportingDepartments(records,period){
   const groups=new Map();records.forEach(r=>{const day=dailyName(reportDate(r[4]));if(day<period.from||day>period.to)return;const name=departmentTitle(r[0]);let g=groups.get(name);if(!g){g={department:name,reports:0,employees:new Set(),last:reportDate(r[4])};groups.set(name,g);}g.reports++;if(staffCode(r[1]))g.employees.add(staffCode(r[1]));if(reportDate(r[4])>g.last)g.last=reportDate(r[4]);});
