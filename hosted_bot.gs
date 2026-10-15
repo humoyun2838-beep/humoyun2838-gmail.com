@@ -43,7 +43,9 @@ function requestConfig(store){
 let BOOK_CACHE, ROSTER_CACHE, PROPS_CACHE, REQUEST_CONFIG;
 const TABLE_CACHE={}, USER_SNAPSHOT={};
 let QUEUE_ORDER=0, CURRENT_OUTBOX_KEYS=null;
-function book(){return BOOK_CACHE||(BOOK_CACHE=SpreadsheetApp.openById(BOOK_ID));}
+function currentBookId(){return config().getProperty('ACTIVE_BOOK_ID')||BOOK_ID;}
+function dashboardSheetId(){return book().getSheetByName(DASHBOARD_NAME).getSheetId();}
+function book(){return BOOK_CACHE||(BOOK_CACHE=SpreadsheetApp.openById(currentBookId()));}
 function table(name,header){if(TABLE_CACHE[name])return TABLE_CACHE[name];const b=book();let s=b.getSheetByName(name);if(!s){s=b.insertSheet(name);s.appendRow(header);s.setFrozenRows(1);s.hideSheet();}return TABLE_CACHE[name]=s;}
 function find(s,key){if(s.getLastRow()<2)return 0;const r=s.getRange(2,1,s.getLastRow()-1,1).createTextFinder(String(key)).matchEntireCell(true).findNext();return r?r.getRow():0;}
 function roster(){if(ROSTER_CACHE)return ROSTER_CACHE;const cached=CacheService.getScriptCache().get('roster:v1');if(cached)return ROSTER_CACHE=JSON.parse(cached);const s=table('_BotRoster',['Bo‘lim','Xodimlar']);const result={};if(s.getLastRow()>1)s.getRange(2,1,s.getLastRow()-1,2).getValues().forEach(v=>result[v[0]]=JSON.parse(v[1]));CacheService.getScriptCache().put('roster:v1',JSON.stringify(result),1800);return ROSTER_CACHE=result;}
@@ -491,7 +493,7 @@ function handleBroadcast(id,text){
  p.setProperty('BROADCAST_JOB:'+jobId,JSON.stringify(job));p.deleteProperty(key);adminMenu(id,'✅ '+(d.at?'Xabar '+Utilities.formatDate(new Date(d.at),'Asia/Tashkent','dd.MM.yyyy HH:mm')+' ga rejalashtirildi.':'Xabar yuborish navbatiga qo‘shildi.')+'\nQabul qiluvchilar: '+ids.length+'.');return true;}
  send('admin',id,'Quyidagi tugmalardan birini tanlang.',d.stage==='confirm'?[[BROADCAST_CONFIRM],[BROADCAST_TIME],[BROADCAST_CANCEL]]:[[BROADCAST_NOW],[BROADCAST_TIME],[BROADCAST_CANCEL]]);return true;
 }
-function processBroadcasts(){const lock=LockService.getScriptLock();if(!lock.tryLock(1000)){ScriptApp.newTrigger('processBroadcasts').timeBased().after(60000).create();return;}try{const p=config(),jobs=Object.entries(p.getProperties()).filter(([k])=>k.startsWith('BROADCAST_JOB:')).map(([key,v])=>({key,job:JSON.parse(v)})).filter(x=>x.job.at<=Date.now());let budget=12;
+function processBroadcasts(){if(config().getProperty('BOOK_MIGRATION_IN_PROGRESS')==='yes')return;const lock=LockService.getScriptLock();if(!lock.tryLock(1000)){ScriptApp.newTrigger('processBroadcasts').timeBased().after(60000).create();return;}try{const p=config(),jobs=Object.entries(p.getProperties()).filter(([k])=>k.startsWith('BROADCAST_JOB:')).map(([key,v])=>({key,job:JSON.parse(v)})).filter(x=>x.job.at<=Date.now());let budget=12;
  for(const item of jobs){const j=item.job;while(j.cursor<j.total&&budget>0){const ids=JSON.parse(p.getProperty('BROADCAST_IDS:'+j.id+':'+Math.floor(j.cursor/100))||'[]'),id=ids[j.cursor%100],u=id?user(id):null;
  if(u&&u.status==='approved'){const outkey='OUTBOX:broadcast:'+j.id+':'+id;if(!p.getProperty(outkey))p.setProperty(outkey,JSON.stringify({route:'main',method:'sendMessage',payload:{chat_id:id,text:j.text},created:Date.now(),order:++QUEUE_ORDER}));j.queued++;budget--;}else j.skipped++;
  j.cursor++;p.setProperty(item.key,JSON.stringify(j));}
@@ -624,6 +626,7 @@ function adminUpdate(up) {
 function telegram(route,method,payload){const key=route==='main'?'BOT_TOKEN':'ADMIN_BOT_TOKEN';const r=UrlFetchApp.fetch('https://api.telegram.org/bot'+config().getProperty(key)+'/'+method,{method:'post',contentType:'application/json',payload:JSON.stringify(payload),muteHttpExceptions:true});const data=JSON.parse(r.getContentText());return {code:r.getResponseCode(),data:data};}
 function flushLegacyOutbox(lockHeld){lockHeld=lockHeld===true;const lock=LockService.getScriptLock();if(!lockHeld&&!lock.tryLock(1000))return;try{const s=table('_BotOutbox',['ID','Bot','Usul','JSON','Holat']),last=s.getLastRow();let start=Math.max(2,Number(config().getProperty('OUTBOX_CURSOR'))||2),count=0;while(start<=last&&count<12){const rows=s.getRange(start,1,Math.min(100,last-start+1),5).getValues();for(let i=0;i<rows.length&&count<12;i++){const v=rows[i];if(v[4]!=='pending')continue;count++;try{const r=telegram(v[1],v[2],JSON.parse(v[3]));if(r.data.ok)v[4]='sent';else if(r.code===400||r.code===403||r.code===401)v[4]='failed';if(v[4]!=='pending')s.getRange(start+i,5).setValue(v[4]);}catch(e){console.warn('Telegram delivery will retry');}}let advance=0;while(advance<rows.length&&rows[advance][4]!=='pending')advance++;if(advance){start+=advance;config().setProperty('OUTBOX_CURSOR',String(start));}if(advance<rows.length)break;}}finally{if(!lockHeld)lock.releaseLock();}}
 function flushOutbox(lockHeld,priorityChat) {
+  if(config().getProperty('BOOK_MIGRATION_IN_PROGRESS')==='yes')return;
   lockHeld=lockHeld===true;
   const lock=LockService.getScriptLock();
   if(!lockHeld&&!lock.tryLock(1000))return;
@@ -678,6 +681,7 @@ function doPost(e) {
   const webhook=Boolean(config().getProperty('WEBHOOK_KEY'))&&p.key===config().getProperty('WEBHOOK_KEY')&&['main','admin'].includes(p.route)&&Number.isSafeInteger(d.update_id)&&d.update_id>=0;
   // Authenticate before acquiring the shared lock or reading any spreadsheet.
   if(!maintenance&&!webhook)return jsonReply({ok:false});
+  if(config().getProperty('BOOK_MIGRATION_IN_PROGRESS')==='yes')throw new Error('Storage migration is in progress');
   const lock=LockService.getScriptLock();lock.waitLock(25000);
   CURRENT_OUTBOX_KEYS=[];
   try{
@@ -1146,7 +1150,8 @@ function checklistAssessment(input){
  return {departments:departments,positive:positive,support:support,summary:input.period.from+' — '+input.period.to+': '+reports.length+' ta shakl statuslar bo‘yicha hisoblandi. To‘liq: '+count[0]+', qisman: '+count[1]+', foydalanilmayapti: '+count[2]+', hisobot kelmagan: '+count[5]+'. Faqat tanlangan statuslar hisobga olinadi; izohlar va oldingi erkin matnlar bahoni o‘zgartirmaydi.'};
 }
 function refreshDashboard(force){
-  force=force===true;const p=config(),guard=LockService.getScriptLock();if(!guard.tryLock(1000)){if(force)p.setProperty("DASHBOARD_REFRESH_PENDING","yes");return;}try{const at=Number(p.getProperty('DASHBOARD_RUNNING_AT')||0);if(at&&Date.now()-at<420000){if(force)p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}p.setProperty('DASHBOARD_RUNNING_AT',String(Date.now()));p.deleteProperty('DASHBOARD_REFRESH_PENDING');}finally{guard.releaseLock();}
+  if(config().getProperty('BOOK_MIGRATION_IN_PROGRESS')==='yes')return;
+  force=force===true;const p=config(),guard=LockService.getScriptLock();if(!guard.tryLock(1000)){if(force)p.setProperty("DASHBOARD_REFRESH_PENDING","yes");return;}try{if(p.getProperty('BOOK_MIGRATION_IN_PROGRESS')==='yes')return;const at=Number(p.getProperty('DASHBOARD_RUNNING_AT')||0);if(at&&Date.now()-at<420000){if(force)p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}p.setProperty('DASHBOARD_RUNNING_AT',String(Date.now()));p.deleteProperty('DASHBOARD_REFRESH_PENDING');}finally{guard.releaseLock();}
   try{
     const selectedStatuses=false,records=dashboardAnalysisSource(),input=dmedInput(records,dashboardSelectedPeriod()),hash=reportKey(DMED_VERSION+'per-report-v5'+JSON.stringify(input)),enabled=p.getProperty('DASHBOARD_AI_ALLOWED')==='yes',key=Boolean(p.getProperty('GEMINI_API_KEY')),last=Number(p.getProperty('DMED_AI_ATTEMPT')||0);let ai=null,status='';
     if(!selectedStatuses&&p.getProperty('DMED_AI_HASH')===hash){const rows=input.departments.map((n,i)=>JSON.parse(p.getProperty('DMED_AI_ROW:'+i)||'null'));if(rows.every((r,i)=>r&&r.department===input.departments[i]))ai={summary:p.getProperty('DMED_AI_SUMMARY')||'',departments:rows,positive:loadStaff('positive'),support:loadStaff('support')};}
@@ -1219,7 +1224,7 @@ function renderDashboardLegend(s,data,fresh,records,input){
 function dashboardExportLastRow(){return Math.max(262,Object.keys(roster()).length+247);}
 function dashboardExportRange(){return 'A1:N'+dashboardExportLastRow();}
 function dashboardPdfParts(){return [['Umumiy Dashboardni PDF yuklash',dashboardExportRange()]];}
-function dashboardPdfButtons(){return dashboardPdfParts().map((p,i)=>'<a target="_blank" rel="noopener" class="pdf '+(i===0?'full':'')+'" href="https://docs.google.com/spreadsheets/d/'+BOOK_ID+'/export?format=pdf&amp;gid=1282358378&amp;range='+p[1]+'&amp;size=A3&amp;portrait=false&amp;fitw=true&amp;sheetnames=false&amp;printtitle=false&amp;pagenumbers=true&amp;gridlines=false&amp;fzr=false">⬇ '+p[0]+'</a>').join('');}
+function dashboardPdfButtons(){return dashboardPdfParts().map((p,i)=>'<a target="_blank" rel="noopener" class="pdf '+(i===0?'full':'')+'" href="https://docs.google.com/spreadsheets/d/'+currentBookId()+'/export?format=pdf&amp;gid='+dashboardSheetId()+'&amp;range='+p[1]+'&amp;size=A3&amp;portrait=false&amp;fitw=true&amp;sheetnames=false&amp;printtitle=false&amp;pagenumbers=true&amp;gridlines=false&amp;fzr=false">⬇ '+p[0]+'</a>').join('');}
 function dashboardPdfHtml(){return '<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard — PDF yuklash</title><style>body{margin:0;background:#e7eeeb;font:15px Arial;color:#244c40;display:grid;min-height:100vh;place-items:center}.window{background:white;border-radius:24px;padding:28px;width:min(760px,calc(100vw - 64px));box-shadow:0 16px 60px #173f3a26}h1{margin:0 0 12px;font-size:25px}p{line-height:1.5}.buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.pdf{display:block;padding:14px;background:#158261;color:white;text-decoration:none;border-radius:9px;font-weight:bold}.pdf:hover{background:#106a4e}.full{grid-column:1/-1;background:#123f37;font-size:17px}.hint{font-size:13px;color:#60766b;margin-bottom:0}@media(max-width:520px){.buttons{grid-template-columns:1fr}}</style></head><body><main class="window"><h1>Dashboard — PDF yuklash</h1><p>Barcha Dashboard ko‘rsatkichlari, diagrammalar va jadvallar bitta umumiy PDF faylga yuklanadi.</p><div class="buttons">'+dashboardPdfButtons()+'</div><p class="hint">Tugmani bosing → PDF faylni saqlang. Jadvaldagi ma’lumotlar yangilangach, qayta yuklang.</p></main></body></html>';}
 function getClientDashboardPeriod(){return dashboardSelectedPeriod();}
 function setClientDashboardPeriod(from,to){
@@ -1231,12 +1236,12 @@ function setClientDashboardPeriod(from,to){
  if(changed)dashboardDateEdited({range:book().getSheetByName(DASHBOARD_NAME).getRange('C4')});
  return {from:selected.from,to:selected.to,changed:changed,message:changed?'Umumiy davr o‘zgartirildi. Dashboard tahlili yangilanmoqda.':'Bu davr allaqachon tanlangan.'};
 }
-function dashboardDateHtml(){return `<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard — sana filtri</title><style>body{font:16px Arial;background:#edf4f0;color:#244c40;margin:0;padding:24px}.card{max-width:620px;margin:6vh auto;background:white;padding:28px;border-radius:20px;box-shadow:0 12px 45px #173f3a20}h1{font-size:25px}label{display:block;margin-top:18px}input{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #b9cec3;border-radius:8px;margin-top:7px}button,a{display:block;border:0;border-radius:8px;padding:14px;background:#158261;color:white;font:inherit;text-align:center;text-decoration:none;margin-top:18px}button{width:100%;cursor:pointer}button:disabled{opacity:.5}#status{line-height:1.5;margin:18px 0}.hint{font-size:14px;line-height:1.5;color:#60766b}</style></head><body><main class="card"><h1>Dashboard — sana filtri</h1><p class="hint">Tanlangan davr barcha foydalanuvchilarning umumiy Dashboard’iga qo‘llanadi. Hisobot matnlarini o‘zgartirish imkoni berilmaydi.</p><form id="form"><label>Boshlanish sanasi<input type="date" id="from" required></label><label>Tugash sanasi<input type="date" id="to" required></label><button id="apply" disabled>Umumiy Dashboard’ga qo‘llash</button></form><div id="status" role="status">Joriy sanalar olinmoqda…</div><a target="_blank" rel="noopener" href="https://docs.google.com/spreadsheets/d/`+BOOK_ID+`/edit#gid=1282358378">Dashboard’ni ko‘rish</a><p class="hint">Sana o‘zgargach, tahlil bir necha daqiqa olishi mumkin. Eski foizlar yangi davr natijasi sifatida ko‘rsatilmaydi.</p></main><script>const form=document.getElementById('form'),apply=document.getElementById('apply'),status=document.getElementById('status'),from=document.getElementById('from'),to=document.getElementById('to');function fail(e){status.textContent=e.message||'So‘rov bajarilmadi.';apply.disabled=false;}google.script.run.withSuccessHandler(p=>{from.value=p.from;to.value=p.to;apply.disabled=false;status.textContent='Joriy umumiy davr: '+p.from+' — '+p.to;}).withFailureHandler(fail).getClientDashboardPeriod();form.addEventListener('submit',e=>{e.preventDefault();if(from.value>to.value){status.textContent='Boshlanish sanasi tugash sanasidan keyin bo‘lmasin.';return;}apply.disabled=true;status.textContent='Davr qo‘llanmoqda…';google.script.run.withSuccessHandler(p=>{status.textContent=p.message+' Davr: '+p.from+' — '+p.to;apply.disabled=false;}).withFailureHandler(fail).setClientDashboardPeriod(from.value,to.value);});</script></body></html>`;}
+function dashboardDateHtml(){return `<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dashboard — sana filtri</title><style>body{font:16px Arial;background:#edf4f0;color:#244c40;margin:0;padding:24px}.card{max-width:620px;margin:6vh auto;background:white;padding:28px;border-radius:20px;box-shadow:0 12px 45px #173f3a20}h1{font-size:25px}label{display:block;margin-top:18px}input{box-sizing:border-box;width:100%;padding:12px;font:inherit;border:1px solid #b9cec3;border-radius:8px;margin-top:7px}button,a{display:block;border:0;border-radius:8px;padding:14px;background:#158261;color:white;font:inherit;text-align:center;text-decoration:none;margin-top:18px}button{width:100%;cursor:pointer}button:disabled{opacity:.5}#status{line-height:1.5;margin:18px 0}.hint{font-size:14px;line-height:1.5;color:#60766b}</style></head><body><main class="card"><h1>Dashboard — sana filtri</h1><p class="hint">Tanlangan davr barcha foydalanuvchilarning umumiy Dashboard’iga qo‘llanadi. Hisobot matnlarini o‘zgartirish imkoni berilmaydi.</p><form id="form"><label>Boshlanish sanasi<input type="date" id="from" required></label><label>Tugash sanasi<input type="date" id="to" required></label><button id="apply" disabled>Umumiy Dashboard’ga qo‘llash</button></form><div id="status" role="status">Joriy sanalar olinmoqda…</div><a target="_blank" rel="noopener" href="https://docs.google.com/spreadsheets/d/`+currentBookId()+`/edit#gid=`+dashboardSheetId()+`">Dashboard’ni ko‘rish</a><p class="hint">Sana o‘zgargach, tahlil bir necha daqiqa olishi mumkin. Eski foizlar yangi davr natijasi sifatida ko‘rsatilmaydi.</p></main><script>const form=document.getElementById('form'),apply=document.getElementById('apply'),status=document.getElementById('status'),from=document.getElementById('from'),to=document.getElementById('to');function fail(e){status.textContent=e.message||'So‘rov bajarilmadi.';apply.disabled=false;}google.script.run.withSuccessHandler(p=>{from.value=p.from;to.value=p.to;apply.disabled=false;status.textContent='Joriy umumiy davr: '+p.from+' — '+p.to;}).withFailureHandler(fail).getClientDashboardPeriod();form.addEventListener('submit',e=>{e.preventDefault();if(from.value>to.value){status.textContent='Boshlanish sanasi tugash sanasidan keyin bo‘lmasin.';return;}apply.disabled=true;status.textContent='Davr qo‘llanmoqda…';google.script.run.withSuccessHandler(p=>{status.textContent=p.message+' Davr: '+p.from+' — '+p.to;apply.disabled=false;}).withFailureHandler(fail).setClientDashboardPeriod(from.value,to.value);});</script></body></html>`;}
 function doGet(e){const dates=e&&e.parameter&&e.parameter.view==='dates';return HtmlService.createHtmlOutput(dates?dashboardDateHtml():dashboardPdfHtml()).setTitle(dates?'Dashboard — sana filtri':'Dashboard — PDF yuklash');}
 function downloadDashboardPdf(){SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(dashboardPdfHtml()).setWidth(820).setHeight(650),'Dashboard — PDF yuklash');}
 function installDashboardDownloadLink(){
  const s=book().getSheetByName(DASHBOARD_NAME);if(!s)return;
- const url='https://docs.google.com/spreadsheets/d/'+BOOK_ID+'/export?format=pdf&gid='+s.getSheetId()+'&range='+dashboardExportRange()+'&size=A3&portrait=false&fitw=true&sheetnames=false&printtitle=false&pagenumbers=true&gridlines=false&fzr=false';
+ const url='https://docs.google.com/spreadsheets/d/'+currentBookId()+'/export?format=pdf&gid='+s.getSheetId()+'&range='+dashboardExportRange()+'&size=A3&portrait=false&fitw=true&sheetnames=false&printtitle=false&pagenumbers=true&gridlines=false&fzr=false';
  s.getRange('A3:N3').breakApart();
  s.getRange('A3:I3').merge().setValue(Object.keys(roster()).length+' bo‘lim hisoboti va DMED bo‘yicha xodimlar kuzatuvlari').setBackground('#dceef1').setFontColor('#245866').setFontSize(11).setFontWeight('bold');
  s.getRange('J3:N3').merge().setRichTextValue(SpreadsheetApp.newRichTextValue().setText('⬇ UMUMIY DASHBOARD — PDF YUKLASH').setLinkUrl(url).build()).setBackground('#087f63').setFontColor('#ffffff').setFontSize(11).setFontWeight('bold').setHorizontalAlignment('center').setNote('Bosing, so‘ng havolani oching. Tanlangan davrdagi barcha Dashboard qismlari PDF faylga yuklanadi. Google hisobingizda jadvalga kirish huquqi bo‘lishi kerak.');
@@ -1350,4 +1355,41 @@ function auditDashboardProgress(){
  const input=dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod()),progress=dashboardAnalysisProgress(input),p=config(),s=book().getSheetByName(DASHBOARD_NAME);
  console.log(JSON.stringify({period:input.period,total:progress.total,completed:progress.completed,error:p.getProperty('DMED_AI_ERROR'),running_seconds:p.getProperty('DASHBOARD_RUNNING_AT')?Math.round((Date.now()-Number(p.getProperty('DASHBOARD_RUNNING_AT')))/1000):null,pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
  console.log(JSON.stringify({cards:['A7','E7','J7'].map(c=>s.getRange(c).getDisplayValue()),role_period:s.getRange('A17').getDisplayValue(),charts:s.getCharts().length}));
+}
+
+const TRANSFER_SOURCE_ID='1uThzdMAiaunkZBqqClpZdmVWvX7ad2L7Q3WbXw2JmX8';
+const TRANSFER_TARGET_ID='1jLsOGjXr7YQH_9uB4LjELfkEMIB08D_aY20943yYZFc';
+function auditBookTransfer(){
+ const source=SpreadsheetApp.openById(TRANSFER_SOURCE_ID),target=SpreadsheetApp.openById(TRANSFER_TARGET_ID);
+ console.log(JSON.stringify({active:currentBookId(),source_count:source.getSheets().length,source_rows:source.getSheets().reduce((n,s)=>n+s.getLastRow(),0),source_hidden:source.getSheets().filter(s=>s.isSheetHidden()).length,target_count:target.getSheets().length,target:target.getSheets().map(s=>({name:s.getName(),rows:s.getLastRow(),columns:s.getLastColumn()}))}));
+ console.log(JSON.stringify({running:config().getProperty('DASHBOARD_RUNNING_AT'),migration:config().getProperty('BOOK_MIGRATION_IN_PROGRESS')}));
+}
+function migrateBookStep(){
+ const p=config(),source=SpreadsheetApp.openById(TRANSFER_SOURCE_ID),target=SpreadsheetApp.openById(TRANSFER_TARGET_ID),lock=LockService.getScriptLock();lock.waitLock(25000);
+ try{
+  if(currentBookId()===TRANSFER_TARGET_ID&&p.getProperty('BOOK_MIGRATION_IN_PROGRESS')!=='yes'){console.log(JSON.stringify({ok:true,complete:true,active:currentBookId()}));return;}
+  const running=Number(p.getProperty('DASHBOARD_RUNNING_AT')||0);if(running&&Date.now()-running<420000)throw new Error('Dashboard refresh is still running; retry transfer after it finishes');
+  p.setProperty('BOOK_MIGRATION_IN_PROGRESS','yes');target.setSpreadsheetTimeZone(source.getSpreadsheetTimeZone());
+  let completed=0,copied=0;const sheets=source.getSheets();
+  for(const sheet of sheets){
+   const key='BOOK_TRANSFER:'+TRANSFER_TARGET_ID+':'+sheet.getSheetId(),saved=p.getProperty(key);let dest=saved?target.getSheets().find(s=>String(s.getSheetId())===saved):null;
+   if(dest){completed++;continue;}if(copied>=3)continue;
+   const conflict=target.getSheetByName(sheet.getName());if(conflict)conflict.setName('Saqlangan_'+conflict.getSheetId()+'_'+sheet.getName().slice(0,55));
+   dest=sheet.copyTo(target);dest.setName(sheet.getName());
+   const present=new Set(dest.getDeveloperMetadata().map(m=>m.getKey()+'\u0000'+m.getValue()));
+   sheet.getDeveloperMetadata().forEach(m=>{const key=m.getKey()+'\u0000'+m.getValue();if(!present.has(key)){dest.addDeveloperMetadata(m.getKey(),m.getValue());present.add(key);}});
+   if(dest.getLastRow()!==sheet.getLastRow()||dest.getLastColumn()!==sheet.getLastColumn())throw new Error('Copied sheet dimensions do not match');
+   if(/^\d{4}-\d{2}-\d{2}$/.test(sheet.getName())||sheet.getName().startsWith('_')){
+    if(JSON.stringify(sheet.getDataRange().getValues())!==JSON.stringify(dest.getDataRange().getValues()))throw new Error('Copied report values do not match');
+   }
+   if(sheet.isSheetHidden())dest.hideSheet();p.setProperty(key,String(dest.getSheetId()));completed++;copied++;
+  }
+  if(completed<sheets.length){console.log(JSON.stringify({ok:true,complete:false,copied:copied,completed:completed,total:sheets.length}));return;}
+  p.setProperty('ACTIVE_BOOK_ID',TRANSFER_TARGET_ID);BOOK_CACHE=null;ROSTER_CACHE=null;Object.keys(TABLE_CACHE).forEach(k=>delete TABLE_CACHE[k]);
+  ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='dashboardDateEdited').forEach(t=>ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('dashboardDateEdited').forSpreadsheet(target).onEdit().create();
+  ['DMED_RENDER_HASH','DMED_INSIGHTS_CHARTS','DASHBOARD_RUNNING_AT'].forEach(k=>p.deleteProperty(k));
+  installDashboardDownloadLink();p.deleteProperty('BOOK_MIGRATION_IN_PROGRESS');queueDashboardAnalysis();
+  console.log(JSON.stringify({ok:true,complete:true,active:currentBookId(),sheets:completed,dashboard_gid:dashboardSheetId()}));
+ }finally{lock.releaseLock();}
 }
