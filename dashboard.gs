@@ -401,7 +401,7 @@ function mainUpdate(up) {
   if(['/start',BACK,'Bo‘limlar','Bolimlar'].includes(text)){menu(u,BOT_TITLE);return;}
   if(text==='/help'){mainHelp(id);return;}
   const targetDepartment=departmentName(text);
-  if(targetDepartment){u.active=targetDepartment;saveUser(u);let target=draft(id,targetDepartment);if(!target){target={department:targetDepartment,entries:[],stage:rolesEnabled()&&targetDepartment!=='Buxgalteriya'?'roles':'staff'};saveDraft(id,target);}showDraft(u,target,true);return;}
+  if(targetDepartment){u.active=targetDepartment;saveUser(u);let target=draft(id,targetDepartment);if(!target){target={department:targetDepartment,entries:[],stage:rolesEnabled()&&targetDepartment!=='Buxgalteriya'?'roles':'staff'};saveDraft(id,target);}if(rolesEnabled()&&targetDepartment!=='Buxgalteriya'&&!target.payload){showRoles(u,target,true);}else{showDraft(u,target,true);}return;}
   let d=u.active?draft(id,u.active):null;
   if(d){
     if(rolesEnabled()&&d.department!=='Buxgalteriya'){
