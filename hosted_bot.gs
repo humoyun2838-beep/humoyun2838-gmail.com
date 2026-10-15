@@ -22,7 +22,7 @@ const EDIT = '✏️ Xabarni tahrirlash', PREV_PAGE = '◀️ Oldingi 10 ta', NE
 const PREVIEW = '👁️ Xabarni ko‘rish', UNDO = '↩️ Oxirgi yozuvni bekor qilish';
 const DEPARTMENT_REPORT_HEADERS = ['Bo‘lim', 'Xodim FISH', 'Xabar', 'Yuboruvchi FISH', 'Yuboruvchi', 'Sana (Toshkent)'];
 const DEPARTMENT_TITLES = {'Neyronkologiya':'Neyroonkologiya','Ximiya terapiya (4-gematologiya)':'Kimyoterapiya (4-gematologiya)','Oper blok':'Operatsiya bloki'};
-function departmentTitle(n,values){const p=values||config().getProperties(),aliases=JSON.parse(p.DEPARTMENT_ALIASES||'{}'),key=aliases[n]||n;return p['DEPARTMENT_TITLE:'+key]||DEPARTMENT_TITLES[key]||key;}
+function departmentTitle(n,values){const p=values&&typeof values==='object'&&!Array.isArray(values)?values:config().getProperties(),aliases=JSON.parse(p.DEPARTMENT_ALIASES||'{}'),key=aliases[n]||n;return p['DEPARTMENT_TITLE:'+key]||DEPARTMENT_TITLES[key]||key;}
 const BACK = '⬅️ Bo‘limlar', CONFIRM = '✅ Xabarni tasdiqlash', CANCEL = '❌ Kiritishni bekor qilish';
 const DEPARTMENT_ART={"Sklad": "AgACAgIAAxkDAAMkasfHC6guUPnr3zG3WuIZxafVWL8AAvYhaxs-pkBKYbGkfzAiLdgBAAMCAAN3AAM9BA", "Qabul bo‘limi": "AgACAgIAAxkDAAMlasfHDJqfb9XLId8aBKbMobzF-qAAAvchaxs-pkBK3JqxaOmqX9cBAAMCAAN3AAM9BA", "Transfuziologiya": "AgACAgIAAxkDAAMmasfHDTWBm3UMmR1k7cLu81RA67EAAvghaxs-pkBKZR-5ctIcvcUBAAMCAAN3AAM9BA", "Oper blok": "AgACAgIAAxkDAAMnasfHD_yoAfLE7Tbt8m16Ax5lWicAAvohaxs-pkBKRBQ7PQZQE74BAAMCAAN3AAM9BA", "OSS": "AgACAgIAAxkDAAMoasfHEEegYlfjdv-MPWkOGEJmvFwAAvshaxs-pkBK1EitPZwqZUcBAAMCAAN3AAM9BA", "1-xirurgiya": "AgACAgIAAxkDAAMpasfHERVCVAsnn02OU1m0ikhcEJ0AAvwhaxs-pkBKglKO5BjI_cUBAAMCAAN3AAM9BA", "Neyronkologiya": "AgACAgIAAxkDAAMqasfHEyIGkrABVLTDpV-QTMQOXokAAv4haxs-pkBKON0csTyOPHMBAAMCAAN3AAM9BA", "Poliklinika": "AgACAgIAAxkDAAMrasfHFIsBTaVWB8qvDs3KRv6ueB0AAv8haxs-pkBK5LUMjQpMHgABAQADAgADdwADPQQ", "1-gematologiya": "AgACAgIAAxkDAAMsasfHFf0JAY8NKRWp5HWaGk-8kmcAAyJrGz6mQErZjoSh15xcWgEAAwIAA3cAAz0E", "Reanimatsiya": "AgACAgIAAxkDAAMtasfHF25WxIdYxUJBYgZeUr1J8i4AAgEiaxs-pkBK24OWxNneEdABAAMCAAN3AAM9BA", "2-gematologiya": "AgACAgIAAxkDAAMuasfHKo4p4M9P20ftsyYV97jwN4MAAgQiaxs-pkBKM6Psv7rvXk4BAAMCAAN3AAM9BA", "2-xirurgiya": "AgACAgIAAxkDAAMvasfHLBWgIJEZDyNFbckquskpY6EAAgUiaxs-pkBKhD80BzVDvvMBAAMCAAN3AAM9BA", "3-gematologiya": "AgACAgIAAxkDAAMwasfHLvQ2JPrIdyt3XFUeAWD49gUAAgYiaxs-pkBKrzp-V994qpcBAAMCAAN3AAM9BA", "Kunduzgi shifoxona": "AgACAgIAAxkDAAMxasfHL44-0liJmq8lzc4fjP9gJ9wAAgciaxs-pkBKCSEt60YtgvUBAAMCAAN3AAM9BA", "Ximiya terapiya (4-gematologiya)": "AgACAgIAAxkDAAMyasfHTlFvGqvf5tzjNPLcJYXGBfYAAggiaxs-pkBKHuzcLz81uZwBAAMCAAN3AAM9BA"};
 const DEPARTMENT_ICONS={"Buxgalteriya":"📊","Sklad": "📦", "Qabul bo‘limi": "🏥", "Transfuziologiya": "🩸", "Oper blok": "⚕️", "OSS": "🛡️", "1-xirurgiya": "🩺", "Neyronkologiya": "🧠", "Poliklinika": "🏨", "1-gematologiya": "🔬", "Reanimatsiya": "💓", "2-gematologiya": "🧬", "2-xirurgiya": "⚕️", "3-gematologiya": "🔬", "Kunduzgi shifoxona": "☀️", "Ximiya terapiya (4-gematologiya)": "💧"};
@@ -964,12 +964,29 @@ function aggregateReportAssessments(value,input){
  value.summary=input.period.from+' — '+input.period.to+': '+input.reports.length+' ta xabar alohida tahlil qilindi. '+DMED_STATES.map((name,i)=>name+': '+counts[i]+' bo‘lim').join('; ')+'. Holatlar xabar mazmunidagi amaliy ishlar bo‘yicha jamlangan.';
  return value;
 }
-function requestDashboardAI(input){
+function requestDashboardAI(input,progressive){
+ if(progressive)return requestDashboardAIProgressive(input);
  if(input.reports.length<=150)return requestDashboardAIBatch(input);
  const results=[];
  for(let start=0;start<input.reports.length;start+=150)results.push(requestDashboardAIBatch(Object.assign({},input,{reports:input.reports.slice(start,start+150)})));
  if(results.some(r=>!r))return null;
  const merged={departments:results.flatMap(r=>r.departments),report_assessments:results.flatMap(r=>r.report_assessments),positive:results.flatMap(r=>r.positive).slice(0,5),support:results.flatMap(r=>r.support).slice(0,5)};
+ aggregateReportAssessments(merged,input);hydrateAIEvidence(merged,input);return verifiedDashboardAI(merged,input);
+}
+// Resume across executions so a larger day cannot exceed Apps Script's execution limit.
+function requestDashboardAIProgressive(input){
+ const cache=CacheService.getScriptCache(),prefix='dmed-batch-v1:'+reportKey(JSON.stringify(input))+':',results=[];let requested=false;
+ for(let start=0;start<input.reports.length;start+=25){
+  const key=prefix+start,stored=cache.get(key);let result=stored?JSON.parse(stored):null;
+  if(!result){
+   if(requested){config().setProperty('DASHBOARD_REFRESH_PENDING','yes');return null;}
+   result=requestDashboardAIBatch(Object.assign({},input,{reports:input.reports.slice(start,start+25)}));
+   if(!result)return null;const raw=JSON.stringify(result);if(Utilities.newBlob(raw).getBytes().length>95000)throw new Error('Tahlil qismi juda katta');
+   cache.put(key,raw,21600);requested=true;
+  }
+  results.push(result);
+ }
+ const merged={departments:results.flatMap(r=>r.departments),report_assessments:results.flatMap(r=>r.report_assessments),positive:results.flatMap(r=>r.positive||[]).slice(0,5),support:results.flatMap(r=>r.support||[]).slice(0,5)};
  aggregateReportAssessments(merged,input);hydrateAIEvidence(merged,input);return verifiedDashboardAI(merged,input);
 }
 function requestDashboardAIBatch(input){
@@ -1114,7 +1131,7 @@ function renderStaff(s,ai,records,fresh,today){
     }
   });
 }
-function dashboardAnalysisSource(){const records=dashboardSource();return structuredEnabled()?records.filter(r=>parseChecklist(r[2])):records;}
+function dashboardAnalysisSource(){return dashboardSource();}
 function checklistAssessment(input){
  const reports=input.reports.map(r=>({r:r,c:parseChecklist(r.text)})).filter(v=>v.c),states=CHECK_STATES;
  const departments=input.departments.map(name=>{const items=reports.filter(v=>v.r.department===name),values=items.flatMap(v=>v.c.answers),status=!items.length?DMED_STATES[5]:values.every(v=>v===states[0])?DMED_STATES[0]:values.every(v=>v===states[2])?DMED_STATES[2]:DMED_STATES[1];
@@ -1128,13 +1145,13 @@ function checklistAssessment(input){
  return {departments:departments,positive:positive,support:support,summary:input.period.from+' — '+input.period.to+': '+reports.length+' ta shakl statuslar bo‘yicha hisoblandi. To‘liq: '+count[0]+', qisman: '+count[1]+', foydalanilmayapti: '+count[2]+', hisobot kelmagan: '+count[5]+'. Faqat tanlangan statuslar hisobga olinadi; izohlar va oldingi erkin matnlar bahoni o‘zgartirmaydi.'};
 }
 function refreshDashboard(force){
-  force=force===true;const p=config(),guard=LockService.getScriptLock();if(!guard.tryLock(1000)){if(force)p.setProperty("DASHBOARD_REFRESH_PENDING","yes");return;}try{const at=Number(p.getProperty('DASHBOARD_RUNNING_AT')||0);if(at&&Date.now()-at<1800000){if(force)p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}p.setProperty('DASHBOARD_RUNNING_AT',String(Date.now()));p.deleteProperty('DASHBOARD_REFRESH_PENDING');}finally{guard.releaseLock();}
+  force=force===true;const p=config(),guard=LockService.getScriptLock();if(!guard.tryLock(1000)){if(force)p.setProperty("DASHBOARD_REFRESH_PENDING","yes");return;}try{const at=Number(p.getProperty('DASHBOARD_RUNNING_AT')||0);if(at&&Date.now()-at<420000){if(force)p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}p.setProperty('DASHBOARD_RUNNING_AT',String(Date.now()));p.deleteProperty('DASHBOARD_REFRESH_PENDING');}finally{guard.releaseLock();}
   try{
     const selectedStatuses=false,records=dashboardAnalysisSource(),input=dmedInput(records,dashboardSelectedPeriod()),hash=reportKey(DMED_VERSION+'per-report-v5'+JSON.stringify(input)),enabled=p.getProperty('DASHBOARD_AI_ALLOWED')==='yes',key=Boolean(p.getProperty('GEMINI_API_KEY')),last=Number(p.getProperty('DMED_AI_ATTEMPT')||0);let ai=null,status='';
     if(!selectedStatuses&&p.getProperty('DMED_AI_HASH')===hash){const rows=input.departments.map((n,i)=>JSON.parse(p.getProperty('DMED_AI_ROW:'+i)||'null'));if(rows.every((r,i)=>r&&r.department===input.departments[i]))ai={summary:p.getProperty('DMED_AI_SUMMARY')||'',departments:rows,positive:loadStaff('positive'),support:loadStaff('support')};}
     if(selectedStatuses){ai=checklistAssessment(input);if(p.getProperty('DMED_AI_HASH')!==hash){saveStaff('positive',ai.positive);saveStaff('support',ai.support);ai.departments.forEach((r,i)=>p.setProperty('DMED_AI_ROW:'+i,JSON.stringify(r)));p.setProperty('DMED_AI_SUMMARY',ai.summary);p.setProperty('DMED_AI_AT',String(Date.now()));p.setProperty('DMED_AI_HASH',hash);}p.deleteProperty('DMED_AI_ERROR');}
     if(!selectedStatuses&&enabled&&key&&input.reports.length&&!ai&&(force||Date.now()-last>=900000)){
-      p.setProperty('DMED_AI_ATTEMPT',String(Date.now()));try{ai=requestDashboardAI(input);if(ai){saveStaff('positive',ai.positive);saveStaff('support',ai.support);ai.departments.forEach((r,i)=>p.setProperty('DMED_AI_ROW:'+i,JSON.stringify(r)));p.setProperty('DMED_AI_SUMMARY',ai.summary);p.setProperty('DMED_AI_AT',String(Date.now()));p.setProperty('DMED_AI_HASH',hash);p.deleteProperty('DMED_AI_ERROR');}}catch(e){status='AI tahlili olinmadi: '+String(e.message).slice(0,120)+'. ';p.setProperty('DMED_AI_ERROR',status);}
+      p.setProperty('DMED_AI_ATTEMPT',String(Date.now()));try{ai=requestDashboardAI(input,true);if(ai){saveStaff('positive',ai.positive);saveStaff('support',ai.support);ai.departments.forEach((r,i)=>p.setProperty('DMED_AI_ROW:'+i,JSON.stringify(r)));p.setProperty('DMED_AI_SUMMARY',ai.summary);p.setProperty('DMED_AI_AT',String(Date.now()));p.setProperty('DMED_AI_HASH',hash);p.deleteProperty('DMED_AI_ERROR');}}catch(e){status='AI tahlili olinmadi: '+String(e.message).slice(0,120)+'. ';p.setProperty('DMED_AI_ERROR',status);}
     }
     if(reportKey(DMED_VERSION+'per-report-v5'+JSON.stringify(dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod())))!==hash){p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}
     // Explicit statuses and current comments are evaluated together; no historical manual override.
