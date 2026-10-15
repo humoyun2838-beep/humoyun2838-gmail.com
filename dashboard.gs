@@ -1155,6 +1155,13 @@ function refreshDashboard(force){
       p.setProperty('DMED_AI_ATTEMPT',String(Date.now()));try{ai=requestDashboardAI(input,true);if(ai){saveStaff('positive',ai.positive);saveStaff('support',ai.support);ai.departments.forEach((r,i)=>p.setProperty('DMED_AI_ROW:'+i,JSON.stringify(r)));p.setProperty('DMED_AI_SUMMARY',ai.summary);p.setProperty('DMED_AI_AT',String(Date.now()));p.setProperty('DMED_AI_HASH',hash);p.deleteProperty('DMED_AI_ERROR');}}catch(e){status='AI tahlili olinmadi: '+String(e.message).slice(0,120)+'. ';p.setProperty('DMED_AI_ERROR',status);}
     }
     if(reportKey(DMED_VERSION+'per-report-v5'+JSON.stringify(dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod())))!==hash){p.setProperty('DASHBOARD_REFRESH_PENDING','yes');return;}
+    if(!ai&&p.getProperty('DASHBOARD_REFRESH_PENDING')==='yes'){
+      const sheet=book().getSheetByName(DASHBOARD_NAME),periodLabel=input.period.from+' — '+input.period.to;
+      if(String(sheet.getRange('A17').getValue()).includes(periodLabel)){
+        renderAnalysisProgress(sheet,input);return;
+      }
+    }
+
     // Explicit statuses and current comments are evaluated together; no historical manual override.
     if(!ai&&!status&&enabled&&key)status=p.getProperty('DMED_AI_ERROR')||'';
     status+=selectedStatuses?'Hisob mijozlar tanlagan statuslar asosida. Qamrov: '+input.reports.length+' ta shakl. Izoh matni baholashda ishlatilmaydi.':!enabled?'AI roziligi kutilmoqda.':!key?'Gemini API kaliti kiritilmagan; avtomatik mazmuniy tahlil hali ishlamayapti.':ai?'AI tahlili: '+Utilities.formatDate(new Date(Number(p.getProperty('DMED_AI_AT'))),'Asia/Tashkent','dd.MM.yyyy HH:mm')+'. Qamrov: '+input.coverage.analysed+'/'+input.coverage.total+' yozuv.':'Yangi ma’lumot tahlili kutilmoqda; eski baho hozirgi holat sifatida ko‘rsatilmaydi.';
@@ -1328,9 +1335,18 @@ const ROLE_MATRIX_HEADING='BO‘LIMLAR KESIMIDA • SHIFOKORLAR VA HAMSHIRALAR';
 function restoreDashboardRowOrder(s){const p=config(),title=String(s.getRange('A16').getValue()||'');if(title!==ROLE_MATRIX_HEADING){p.deleteProperty('ROLE_MATRIX_MOVED_ROWS');return;}let count=Number(p.getProperty('ROLE_MATRIX_MOVED_ROWS')||0);if(!Number.isSafeInteger(count)||count<1){const cells=s.getRange(16,1,s.getLastRow()-15,1).getValues(),at=cells.findIndex(r=>String(r[0])==='Yangi tasdiqlangan hisobotlar va sana filtri o‘zgarganda jadval avtomatik yangilanadi.');if(at<0)throw new Error('Dashboard jadvali oxiri topilmadi');count=at+1;}s.moveRows(s.getRange(16,1,count,s.getMaxColumns()),237+count);p.deleteProperty('ROLE_MATRIX_MOVED_ROWS');}
 function detachDashboardChartSources(s){const charts=s.getCharts().filter(c=>c.getRanges().some(r=>r.getSheet().getSheetId()===s.getSheetId()));if(!charts.length)return;const target=table('_DashboardCharts',['Dashboard diagramma manbalari']);charts.forEach(chart=>{const builder=chart.modify().clearRanges();chart.getRanges().forEach(source=>{if(source.getSheet().getSheetId()!==s.getSheetId()){builder.addRange(source);return;}ensureRows(target,source.getLastRow());const range=target.getRange(source.getA1Notation());range.setValues(source.getValues());builder.addRange(range);});s.updateChart(builder.build());});}
 function applyDashboardPresentation(s){s.getRange('A14:N14').breakApart().clear().setBackground('#ffffff');s.setRowHeight(14,12);restoreDashboardRowOrder(s);detachDashboardChartSources(s);s.getRange('A140:N157').breakApart().clear();s.getRange('A170:N213').breakApart().clear();s.hideRows(140,18);s.hideRows(170,44);const count=dashboardExportLastRow()-236;config().setProperty('ROLE_MATRIX_MOVED_ROWS',String(count));s.moveRows(s.getRange(237,1,count,s.getMaxColumns()),16);}
-function auditDashboardProgress(){
- const input=dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod()),cache=CacheService.getScriptCache(),p=config(),prefix='dmed-batch-v1:'+reportKey(JSON.stringify(input))+':';let completed=0;
+function dashboardAnalysisProgress(input){
+ const cache=CacheService.getScriptCache(),p=config(),prefix='dmed-batch-v1:'+reportKey(JSON.stringify(input))+':';let completed=0;
  for(let start=0;start<input.reports.length;start+=25){const reports=input.reports.slice(start,start+25),key='dmed-part-v2:'+reportKey(JSON.stringify({period:input.period,departments:input.departments,reports:reports,model:p.getProperty('GEMINI_MODEL')||'gemini-2.5-flash'}));if(cache.get(key)||cache.get(prefix+start))completed+=reports.length;}
- const s=book().getSheetByName(DASHBOARD_NAME);console.log(JSON.stringify({period:input.period,total:input.reports.length,completed:completed,error:p.getProperty('DMED_AI_ERROR'),running_seconds:p.getProperty('DASHBOARD_RUNNING_AT')?Math.round((Date.now()-Number(p.getProperty('DASHBOARD_RUNNING_AT')))/1000):null,pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
+ return {completed:completed,total:input.reports.length};
+}
+function renderAnalysisProgress(sheet,input){
+ const progress=dashboardAnalysisProgress(input),label='Tahlil: '+progress.completed+' / '+progress.total;
+ ['A7','E7','J7'].forEach(cell=>sheet.getRange(cell).setValue(label));
+ sheet.getRange('A13').setValue('Davr: '+input.period.from+' — '+input.period.to+'. '+progress.completed+' / '+progress.total+' yozuv tahlil qilindi. Qolgan yozuvlar avtomatik davom etadi; yakunda bo‘limlar foizlari chiqadi.');
+}
+function auditDashboardProgress(){
+ const input=dmedInput(dashboardAnalysisSource(),dashboardSelectedPeriod()),progress=dashboardAnalysisProgress(input),p=config(),s=book().getSheetByName(DASHBOARD_NAME);
+ console.log(JSON.stringify({period:input.period,total:progress.total,completed:progress.completed,error:p.getProperty('DMED_AI_ERROR'),running_seconds:p.getProperty('DASHBOARD_RUNNING_AT')?Math.round((Date.now()-Number(p.getProperty('DASHBOARD_RUNNING_AT')))/1000):null,pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
  console.log(JSON.stringify({cards:['A7','E7','J7'].map(c=>s.getRange(c).getDisplayValue()),role_period:s.getRange('A17').getDisplayValue(),charts:s.getCharts().length}));
 }
