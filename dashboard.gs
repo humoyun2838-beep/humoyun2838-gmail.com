@@ -15,7 +15,7 @@ function repairAndAuditDashboard20261012(){
  console.log(JSON.stringify({charts:s.getCharts().map(c=>({ranges:c.getRanges().map(r=>r.getA1Notation()),anchor:c.getContainerInfo().getAnchorRow()})),bottom:s.getRange('A170').getDisplayValue(),sourceTable:s.getRange('P1:Q7').getDisplayValues()}));
  console.log(JSON.stringify({period:dashboardSelectedPeriod(),redList:s.getRange('J10').getDisplayValue(),pending:p.getProperty('DASHBOARD_REFRESH_PENDING')}));
 }
-const BOOK_ID = '1uThzdMAiaunkZBqqClpZdmVWvX7ad2L7Q3WbXw2JmX8';
+const BOOK_ID = '1jLsOGjXr7YQH_9uB4LjELfkEMIB08D_aY20943yYZFc';
 const EXEC_URL = 'https://script.google.com/macros/s/AKfycbxIEkIwjPWICN2PF8cx114FNrrAtzv-yOOVJYBrxFA4vVUBmLLnCeCPuSfl8_NaiFjKug/exec';
 const BOT_TITLE = 'Onko gematologiya';
 const EDIT = '✏️ Xabarni tahrirlash', PREV_PAGE = '◀️ Oldingi 10 ta', NEXT_PAGE = 'Keyingi 10 ta ▶️', REVIEW_BACK = '↩️ Xodimlar ro‘yxati';
@@ -1248,8 +1248,8 @@ function installDashboardDownloadLink(){
  s.setRowHeight(3,34);
  s.getRange('A14:N14').breakApart().clear().setBackground('#ffffff');s.setRowHeight(14,12);
  s.getRange('A15:N15').breakApart().merge().setRichTextValue(SpreadsheetApp.newRichTextValue().setText('⬇ BUTUN DASHBOARDNI BITTA PDF FAYLDA YUKLASH').setLinkUrl(url).build()).setBackground('#dceee7').setFontColor('#155c49').setFontWeight('bold').setHorizontalAlignment('center');s.setRowHeight(15,32);
- s.getRange('A159:N167').breakApart().clear().setBackground('#f4f8f7');
 }
+
 function onOpen(){SpreadsheetApp.getUi().createMenu('Dashboard').addItem('PDF yuklash oynasi','downloadDashboardPdf').addItem('Rasmlarni yuklab olish','downloadDashboardImages').addToUi();}
 function dashboardImageSnapshot(){
   const s=book().getSheetByName(DASHBOARD_NAME),r=s.getRange(dashboardExportRange());
