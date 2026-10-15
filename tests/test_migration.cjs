@@ -1,0 +1,17 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const props={},logs=[];let next=1,copies=0,links=0;
+class Sheet{
+ constructor(name,data,hidden=false){this.name=name;this.data=data;this.hidden=hidden;this.id=next++;this.metadata=[];}
+ getName(){return this.name}getSheetId(){return this.id}getLastRow(){return this.data.length}getLastColumn(){return this.data[0]?.length||0}isSheetHidden(){return this.hidden}hideSheet(){this.hidden=true}setName(n){this.name=n;return this}getDataRange(){return {getValues:()=>this.data}}getDeveloperMetadata(){return this.metadata}addDeveloperMetadata(k,v){this.metadata.push({getKey:()=>k,getValue:()=>v})}copyTo(b){copies++;const s=new Sheet(this.name,JSON.parse(JSON.stringify(this.data)));b.sheets.push(s);return s}
+}
+const source={sheets:Array.from({length:5},(_,i)=>new Sheet(i===0?'Dashboard':i===1?'2026-10-15':'_Internal'+i,[['Header'],['row'+i]],i>1)),getSheets(){return this.sheets},getSpreadsheetTimeZone(){return 'Asia/Tashkent'}};source.sheets[1].addDeveloperMetadata('onko_reports:ab','["key"]');
+const target={sheets:[new Sheet('Dashboard',[['Original target data']])],getSheets(){return this.sheets},getSheetByName(n){return this.sheets.find(s=>s.name===n)},setSpreadsheetTimeZone(z){this.zone=z}};
+const c={console:{log:v=>logs.push(JSON.parse(v))},PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]??null,setProperty:(k,v)=>props[k]=v,deleteProperty:k=>delete props[k]})},SpreadsheetApp:{openById:id=>id==='1jLsOGjXr7YQH_9uB4LjELfkEMIB08D_aY20943yYZFc'?target:source},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},ScriptApp:{getProjectTriggers:()=>[],newTrigger:()=>({forSpreadsheet:()=>({onEdit:()=>({create(){}})})})}};
+vm.createContext(c);vm.runInContext(fs.readFileSync('hosted_bot.gs','utf8'),c);c.installDashboardDownloadLink=()=>links++;c.queueDashboardAnalysis=()=>{};
+c.migrateBookStep();assert.equal(copies,3);assert.equal(props.ACTIVE_BOOK_ID,undefined);assert.equal(props.BOOK_MIGRATION_IN_PROGRESS,'yes');assert.ok(target.sheets.some(s=>s.name.startsWith('Saqlangan_')&&s.data[0][0]==='Original target data'));
+c.migrateBookStep();assert.equal(copies,5);assert.equal(props.ACTIVE_BOOK_ID,'1jLsOGjXr7YQH_9uB4LjELfkEMIB08D_aY20943yYZFc');assert.equal(props.BOOK_MIGRATION_IN_PROGRESS,undefined);assert.equal(links,1);assert.equal(target.getSheetByName('2026-10-15').metadata[0].getValue(),'["key"]');assert.ok(target.getSheetByName('_Internal2').hidden);
+c.migrateBookStep();assert.equal(copies,5);assert.ok(logs.at(-1).complete);assert.equal(c.currentBookId(),props.ACTIVE_BOOK_ID);
+console.log('Migration: resumable copies, existing target preserved, metadata and hidden sheets preserved, switch only after completion, repeat is idempotent.');
+c.dashboardPdfParts=()=>[['All','A1:N262']];const pdf=c.dashboardPdfButtons();assert.ok(pdf.includes(props.ACTIVE_BOOK_ID));assert.ok(pdf.includes('gid='+target.getSheetByName('Dashboard').getSheetId()));assert.ok(!pdf.includes('gid=1282358378'));
+props.WEBHOOK_KEY='test';props.BOOK_MIGRATION_IN_PROGRESS='yes';assert.throws(()=>c.doPost({parameter:{key:'test',route:'main'},postData:{contents:'{"update_id":1}'}}),/migration is in progress/);delete props.BOOK_MIGRATION_IN_PROGRESS;
+console.log('New PDF links use target book and actual sheet ID; updates during migration fail for durable relay retry instead of being acknowledged.');
